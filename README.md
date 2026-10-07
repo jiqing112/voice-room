@@ -221,15 +221,102 @@ go run ./server/tools/audiobot "房间名" 60
 - 房间/成员仅存内存，进程重启即清空（账号库 `auth.db` 除外，SQLite 持久化）
 - 房间页会向同房间成员广播自己的公网 IP（成员卡片"网络信息"弹窗），邀请链接可转发，介意者请知悉
 
-## 部署到服务器
+## 生产部署教程
 
-部署分两件事：**跑起来**（二选一）+ **反代与证书**（见下一节，无论哪种方式都一样）。
+四种方式按手头条件对号入座，**反向代理与 SSL 证书配法完全相同**（见下一节，
+先部署后配反代，或先配反代再部署都行）。所有方式都假设：一台 Ubuntu/Debian
+服务器、云安全组已放行 **TCP 80/443/7881 + UDP 50000-50100**（清单见反代章节）。
 
-- **Docker 一键部署**（推荐，服务器只需 Docker + 外部 Caddy）：
-  见 [deploy/docker/README.md](deploy/docker/README.md)，`docker compose up -d --build` 一条命令起全栈。
-  布局二选一：**三容器**（默认，组件独立）或**单容器 all-in-one**（`compose.all-in-one.yaml`，最简）。
-- **systemd 二进制部署**：完整分步指南见 [deploy/DEPLOY.md](deploy/DEPLOY.md)，
-  或开发机 `bash deploy/push.sh root@服务器IP` 一条命令打包+上传+部署。
+| 方式 | 服务器需要 | 特点 | 适合 |
+|---|---|---|---|
+| ① Docker 三容器 | Docker + Caddy | **推荐**：组件独立、日志清晰 | 绝大多数人 |
+| ② Docker 单容器 | Docker + Caddy | 一个镜像最省心，升级全量重启 | 极简自用 |
+| ③ 二进制 + systemd | 无（脚本自动装一切） | 开发机一条命令全自动 | 裸机快速上线 |
+| ④ 源码直跑 | Go + Node + LiveKit | 服务器上 clone 即构建 | 临时演示/开发机 |
+
+### 方式一：Docker 三容器（推荐）
+
+LiveKit、Go 后端、SvelteKit 各一个容器，`docker compose` 编排；宿主机 Caddy 做反代。
+
+```bash
+git clone https://github.com/jiqing112/voice-room.git && cd voice-room/deploy/docker
+
+cp .env.example .env && vim .env
+# ① PUBLIC_ORIGIN=https://你的域名（或 https://公网IP）
+# ② LIVEKIT_URL=wss://你的域名/livekit
+# ③ LIVEKIT_KEY / LIVEKIT_SECRET：openssl rand -hex 8 / -hex 24 生成
+
+docker compose up -d --build      # 首次 3-5 分钟
+docker compose ps                 # 三个容器 Up (healthy)
+curl http://127.0.0.1:8080/api/health
+```
+
+然后按下一节配好 Caddy，站点即上线。日常：`docker compose logs -f server` 看日志、
+重新部署重复同一条 `up -d --build`、账号库在 `server-data` 卷里不受重建影响。
+
+### 方式二：Docker 单容器（all-in-one）
+
+三个服务打成一个镜像，容器内由入口脚本守护（任一进程退出 → 整容器重启）。
+`.env`、反代、端口与方式一完全一致，只换 compose 文件：
+
+```bash
+git clone https://github.com/jiqing112/voice-room.git && cd voice-room/deploy/docker
+cp .env.example .env && vim .env
+docker compose -f compose.all-in-one.yaml up -d --build
+```
+
+镜像约 340MB；升级任何组件都是整容器重建（语音瞬断几秒）。已实测：三服务健康
+检查全绿，杀掉任一进程 2 秒内整容器退出并被 restart 策略拉起。
+
+### 方式三：二进制 + systemd（一键脚本，裸机全自动）
+
+开发机构建 + 推送 + 服务器自动安装（Node、LiveKit、Caddy 二进制、四个 systemd
+服务、随机密钥、NTP），全程无人值守：
+
+```bash
+# 开发机（Git Bash / Linux / macOS）：
+bash deploy/push.sh root@服务器IP --domain voice.example.com   # 有域名，自动 HTTPS
+bash deploy/push.sh root@服务器IP                              # 无域名，Caddy 自签（浏览器点一次继续）
+# 可选：--basicauth user:pass 站点密码墙 / --register 开放注册 / --require-account 建房需登录
+```
+
+跑完屏幕会打印**站点密码和健康检查结果，记得抄**。服务器上落点是
+`/opt/voice-rooms`，服务名 `caddy / livekit / voice-rooms / voicerooms-web`。
+分步手动版（自己交叉编译、上传、装 systemd）见 [deploy/DEPLOY.md](deploy/DEPLOY.md)。
+
+### 方式四：源码直跑（服务器上 clone 构建）
+
+适合临时演示或就是想在服务器上开发。前置：Go 1.22+、Node 20+、LiveKit
+（Docker 或[官方二进制](https://github.com/livekit/livekit/releases)均可）。
+
+```bash
+git clone https://github.com/jiqing112/voice-room.git && cd voice-room
+
+# 0. 生成一对 LiveKit 密钥（livekit 与 Go 后端必须用同一对）
+export LK_KEY=$(openssl rand -hex 8) LK_SECRET=$(openssl rand -hex 24)
+
+# 1. LiveKit：把根目录 livekit.yaml 的 keys: 改成 "${LK_KEY}: ${LK_SECRET}"，然后启动
+vim livekit.yaml          # keys: <LK_KEY的值>: <LK_SECRET的值>
+docker compose up -d      # 或 livekit-server --config livekit.yaml
+
+# 2. 构建并跑 Go 后端（监听 127.0.0.1:8080）
+cd server
+LIVEKIT_URL=wss://你的域名/livekit \
+LIVEKIT_API_KEY=$LK_KEY LIVEKIT_API_SECRET=$LK_SECRET \
+GIN_MODE=release AUTH_DB=/opt/voice-rooms/auth.db \
+go build -o voice-rooms . && ./voice-rooms
+
+# 3. 构建并跑前端（监听 127.0.0.1:3000）
+cd ../client
+npm ci && npm run build && npm ci --omit=dev --ignore-scripts
+ORIGIN=https://你的域名 PORT=3000 HOST=127.0.0.1 node build/index.js
+```
+
+三个进程都起来后照下一节配反代即可对外。**长期运行不建议 `nohup` 裸跑**——
+把这三个命令写进 systemd（参考 `deploy/*.service` 模板，即方式三手动版的形态），
+否则断线/重启后没人拉起。
+
+无论哪种方式，跑起来后的反代、证书、防火墙、验证，统一看下一节。
 
 ## 反向代理与 SSL 证书（生产必读）
 
