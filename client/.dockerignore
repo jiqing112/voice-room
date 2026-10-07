@@ -1,0 +1,5 @@
+# 构建上下文排除：本地开发产物不进镜像（构建在容器内重新做）
+node_modules
+.svelte-kit
+build
+.certs

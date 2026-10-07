@@ -1,0 +1,308 @@
+@import 'tailwindcss';
+
+/* ======== 亮/暗双主题（class 策略：html.dark）======== */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------- 亮色「晨间工作室」---------- */
+:root {
+	--radius: 0.875rem;
+	--background: oklch(0.984 0.004 286);
+	--foreground: oklch(0.22 0.012 286);
+	--card: oklch(1 0 0 / 78%);
+	--card-foreground: oklch(0.22 0.012 286);
+	--popover: oklch(1 0 0 / 92%);
+	--popover-foreground: oklch(0.22 0.012 286);
+	--primary: oklch(0.6 0.13 163);
+	--primary-foreground: oklch(0.99 0.005 165);
+	--secondary: oklch(0.955 0.005 286);
+	--secondary-foreground: oklch(0.32 0.012 286);
+	--muted: oklch(0.945 0.006 286);
+	--muted-foreground: oklch(0.51 0.016 286);
+	--accent: oklch(0.945 0.006 286);
+	--accent-foreground: oklch(0.32 0.012 286);
+	--destructive: oklch(0.58 0.21 25);
+	--destructive-foreground: oklch(0.99 0 0);
+	--border: oklch(0.22 0.012 286 / 10%);
+	--input: oklch(0.22 0.012 286 / 15%);
+	--ring: oklch(0.6 0.13 163 / 45%);
+
+	/* 极光背景：亮色下更淡更通透 */
+	--aurora-1: oklch(0.7 0.14 165 / 12%);
+	--aurora-2: oklch(0.72 0.12 232 / 10%);
+	--aurora-3: oklch(0.62 0.12 300 / 7%);
+
+	--font-sans:
+		'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'PingFang SC',
+		'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+}
+
+/* ---------- 暗色「Midnight Studio」---------- */
+.dark {
+	--background: oklch(0.145 0.006 285.9);
+	--foreground: oklch(0.97 0.002 286);
+	--card: oklch(0.205 0.007 286 / 72%);
+	--card-foreground: oklch(0.97 0.002 286);
+	--popover: oklch(0.19 0.007 286);
+	--popover-foreground: oklch(0.97 0.002 286);
+	--primary: oklch(0.84 0.16 162);
+	--primary-foreground: oklch(0.19 0.05 165);
+	--secondary: oklch(0.27 0.007 286);
+	--secondary-foreground: oklch(0.97 0.002 286);
+	--muted: oklch(0.26 0.007 286);
+	--muted-foreground: oklch(0.71 0.014 286);
+	--accent: oklch(0.27 0.007 286);
+	--accent-foreground: oklch(0.97 0.002 286);
+	--destructive: oklch(0.68 0.2 22);
+	--destructive-foreground: oklch(0.985 0 0);
+	--border: oklch(1 0 0 / 9%);
+	--input: oklch(1 0 0 / 13%);
+	--ring: oklch(0.84 0.16 162 / 55%);
+
+	--aurora-1: oklch(0.55 0.13 165 / 16%);
+	--aurora-2: oklch(0.6 0.14 232 / 13%);
+	--aurora-3: oklch(0.5 0.12 300 / 10%);
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--font-sans: var(--font-sans);
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 6px);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	html {
+		scrollbar-gutter: stable;
+	}
+	body {
+		@apply text-foreground antialiased;
+		font-family: var(--font-sans);
+		background-color: var(--background);
+		/* 极光背景：三层径向渐变叠加，颜色随主题切换 */
+		background-image:
+			radial-gradient(52rem 36rem at 12% -8%, var(--aurora-1), transparent 62%),
+			radial-gradient(46rem 30rem at 88% 4%, var(--aurora-2), transparent 60%),
+			radial-gradient(40rem 32rem at 50% 110%, var(--aurora-3), transparent 58%);
+		background-attachment: fixed;
+	}
+	::selection {
+		background: oklch(0.7 0.14 163 / 30%);
+	}
+	/* 移动端：去掉点击高亮 */
+	body {
+		-webkit-tap-highlight-color: transparent;
+	}
+	/* iOS Safari：输入框聚焦时字号 <16px 会触发页面自动放大，这里锁住 */
+	@media (max-width: 640px) {
+		input:not([type='checkbox']):not([type='radio']):not([type='range']),
+		select,
+		textarea {
+			font-size: 16px !important;
+		}
+	}
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+	::-webkit-scrollbar-thumb {
+		background: color-mix(in oklab, var(--foreground) 16%, transparent);
+		border-radius: 8px;
+		border: 2px solid transparent;
+		background-clip: content-box;
+	}
+	::-webkit-scrollbar-thumb:hover {
+		background: color-mix(in oklab, var(--foreground) 28%, transparent);
+		background-clip: content-box;
+		border: 2px solid transparent;
+	}
+}
+
+/* ============ 动效 ============ */
+
+/* 入场：浮升淡入，配合 --delay 做交错节奏 */
+@keyframes fade-up {
+	from {
+		opacity: 0;
+		transform: translateY(14px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+.fade-up {
+	animation: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+	animation-delay: var(--delay, 0ms);
+}
+
+/* 说话均衡器：4 根跳动的声纹柱（纯 CSS，代替呆板的圆点） */
+.eq {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 2.5px;
+	height: 14px;
+}
+.eq > i {
+	width: 3px;
+	border-radius: 2px;
+	background: currentColor;
+	transform-origin: bottom;
+	animation: eq-bounce 1s ease-in-out infinite;
+}
+.eq > i:nth-child(1) {
+	height: 60%;
+	animation-delay: 0ms;
+}
+.eq > i:nth-child(2) {
+	height: 100%;
+	animation-delay: 160ms;
+}
+.eq > i:nth-child(3) {
+	height: 75%;
+	animation-delay: 320ms;
+}
+.eq > i:nth-child(4) {
+	height: 90%;
+	animation-delay: 80ms;
+}
+@keyframes eq-bounce {
+	0%,
+	100% {
+		transform: scaleY(0.35);
+	}
+	50% {
+		transform: scaleY(1);
+	}
+}
+
+/* 说话者光环：呼吸式外扩 */
+@keyframes pulse-ring {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 40%, transparent);
+	}
+	75% {
+		box-shadow: 0 0 0 10px transparent;
+	}
+	100% {
+		box-shadow: 0 0 0 0 transparent;
+	}
+}
+.pulse-ring {
+	animation: pulse-ring 1.6s ease-out infinite;
+}
+
+/* 活跃房间的小圆点：呼吸 */
+@keyframes breathe {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.45;
+		transform: scale(0.82);
+	}
+}
+.breathe {
+	animation: breathe 2s ease-in-out infinite;
+}
+
+/* 成员卡片上的歌名跑马灯：两份内容平移一份宽度，无缝循环。
+   内容没超宽时不加 .marquee-on，保持静止（由 marquee action 判定） */
+.marquee {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+}
+.marquee-track {
+	display: inline-flex;
+	gap: 1.5em;
+	padding-right: 1.5em;
+}
+.marquee-on .marquee-track {
+	animation: marquee 9s linear infinite;
+}
+@keyframes marquee {
+	to {
+		transform: translateX(-50%);
+	}
+}
+
+/* 正在播放音乐的唱片：缓慢旋转 */
+@keyframes spin-slow {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.spin-slow {
+	animation: spin-slow 3.5s linear infinite;
+}
+
+/* 主按钮麦风开启时的缓慢光晕 */
+@keyframes glow-pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 24px -6px color-mix(in oklab, var(--primary) 55%, transparent);
+	}
+	50% {
+		box-shadow: 0 0 34px -4px color-mix(in oklab, var(--primary) 80%, transparent);
+	}
+}
+.glow-pulse {
+	animation: glow-pulse 2.4s ease-in-out infinite;
+}
+
+/* 模态框入场：轻微上浮 + 缩放淡入（比纯 fade-up 更有"弹窗感"） */
+@keyframes pop-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px) scale(0.96);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+.pop-in {
+	animation: pop-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 尊重减弱动效偏好：所有装饰性动画降级为静态 */
+@media (prefers-reduced-motion: reduce) {
+	.fade-up,
+	.eq > i,
+	.pulse-ring,
+	.breathe,
+	.glow-pulse,
+	.marquee-on .marquee-track,
+	.spin-slow,
+	.pop-in {
+		animation: none !important;
+	}
+	.fade-up {
+		opacity: 1;
+	}
+}

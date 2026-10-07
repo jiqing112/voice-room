@@ -1,0 +1,56 @@
+# =============================================================================
+# 无域名、纯公网 IP 直连的反代样例（Let's Encrypt IP 证书方案）
+#
+# 前提：Caddy >= 2.10（本项目已在 2.11.2 实测通过；旧版不认识 profile 指令）
+# 原理：站点地址直接写公网 IP，通过 ACME shortlived 配置向 Let's Encrypt
+#       申请「IP 证书」——6 天短时效，Caddy 自动续期，全程无需域名。
+# 要求：80/443 必须能从公网到达本机（签发时 Let's Encrypt 会来连一下验证）。
+#
+# 把 203.0.113.10 换成你的公网 IP，放到 /etc/caddy/Caddyfile，
+# systemctl reload caddy，看 journalctl -u caddy 里的 "certificate obtained
+# successfully" 即签发成功。
+# =============================================================================
+{
+	# 关键坑：客户端访问 IP 时不发送 SNI（RFC 规定 IP 字面量不能进 SNI），
+	# Caddy 无 SNI 就不知道选哪张证书，TLS 握手直接回 internal error
+	# （浏览器/curl 表现为连接失败）。必须指定默认 SNI 指向这张 IP 证书。
+	default_sni 203.0.113.10
+}
+
+203.0.113.10 {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			# Let's Encrypt 的 IP 证书只走 shortlived 配置（6 天有效期）。
+			# 注意是 issuer（单数）；写 issuers 会报 unknown subdirective
+			profile shortlived
+		}
+	}
+	encode gzip
+
+	# 可选站点密码墙（哈希生成：caddy hash-password --plaintext '密码'）
+	# basic_auth / {
+	# 	admin $2a$14$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+	# }
+
+	# Go 后端 REST API
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Go 后端成员同步 WebSocket（长连接）
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# LiveKit 信令。必须用 handle_path——剥掉 /livekit 前缀再转发，
+	# 用 handle 会把 /livekit/rtc 原样传给 LiveKit 导致 404
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+
+	# 页面本体（SvelteKit adapter-node 容器）
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

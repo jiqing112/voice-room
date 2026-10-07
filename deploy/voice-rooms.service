@@ -1,0 +1,19 @@
+[Unit]
+Description=Voice Rooms Go API Server (token + rooms + ws)
+After=network.target livekit.service
+
+[Service]
+# 与仓库 livekit.yaml 中 keys 保持一致
+Environment=PORT=8080
+Environment=LIVEKIT_API_KEY=devkey
+Environment=LIVEKIT_API_SECRET=devkeysecret
+# 返回给浏览器的信令地址必须是浏览器能访问到的地址（局域网 IP）
+Environment=LIVEKIT_URL=ws://192.168.218.146:7880
+# 后端自己访问 LiveKit HTTP API 用本机回环即可
+Environment=LIVEKIT_HTTP_URL=http://127.0.0.1:7880
+ExecStart=/opt/voice-rooms/voice-rooms
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

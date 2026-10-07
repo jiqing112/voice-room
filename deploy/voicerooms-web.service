@@ -1,0 +1,17 @@
+[Unit]
+Description=Voice Rooms Web (SvelteKit adapter-node)
+After=network.target voice-rooms.service livekit.service
+
+[Service]
+# 前端构建产物目录：client/build + 生产依赖 node_modules（见 DEPLOY.md 第 1 步）
+WorkingDirectory=/opt/voice-rooms/web
+ExecStart=/usr/bin/node build/index.js
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+# 告诉 SvelteKit 对外的完整地址（生成绝对链接/校验用），改成你的域名
+Environment=ORIGIN=https://your-domain.com
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

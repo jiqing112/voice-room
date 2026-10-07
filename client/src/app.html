@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="theme-color" content="#09090b" />
+		<!-- 首屏防闪烁：在 CSS 加载前根据 localStorage / 系统偏好挂上 dark 类 -->
+		<script>
+			try {
+				var t = localStorage.getItem('echo:theme');
+				if (t !== 'light' && t !== 'dark')
+					t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+				if (t === 'dark') document.documentElement.classList.add('dark');
+			} catch (e) {
+				document.documentElement.classList.add('dark');
+			}
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

@@ -1,0 +1,12 @@
+[Unit]
+Description=LiveKit Media Server (voice-rooms prototype)
+After=network.target
+
+[Service]
+ExecStart=/opt/voice-rooms/livekit-server --config /opt/voice-rooms/livekit.yaml
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+# Caddy 版反代（比 nginx 简单：自动申请并续期 Let's Encrypt 证书）
+# 前提：域名 A 记录已指向本服务器，且 80/443 端口公网可达。
+# 放到 /etc/caddy/Caddyfile，然后 systemctl reload caddy
+#
+# 如果没有域名（纯内网 IP），Caddy 无法自动签发证书，
+# 请改用 nginx + 自签证书，或参考 deploy/DEPLOY.md 的内网方案。
+
+your-domain.com {
+	encode gzip
+
+	# Go 后端 REST API
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Go 后端成员同步 WebSocket
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# LiveKit 信令（路径代理，前端自动改写）。
+	# 注意必须用 handle_path——它会剥掉 /livekit 前缀再转发，
+	# 用 handle 的话 /livekit/rtc 会原样传给 LiveKit 导致 404
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+
+	# 页面本体（SvelteKit adapter-node）
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

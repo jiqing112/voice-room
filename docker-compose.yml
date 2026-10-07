@@ -1,0 +1,15 @@
+# LiveKit 媒体服务器（本地开发）
+# 启动：docker compose up -d
+# 停止：docker compose down
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    # 配置文件里声明了 API key/secret 与端口，必须与 Go 后端 (.env / 默认值) 一致
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    ports:
+      - "7880:7880"                      # 信令：HTTP + WebSocket（浏览器连这里）
+      - "7881:7881"                      # 媒体：RTC over TCP（UDP 被墙时的回退）
+      - "50000-50100:50000-50100/udp"    # 媒体：WebRTC UDP 端口段
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro

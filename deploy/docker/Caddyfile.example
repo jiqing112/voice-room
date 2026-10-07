@@ -1,0 +1,35 @@
+# =============================================================================
+# 宿主机（Docker 外部）Caddy 反代示例
+# 放到 /etc/caddy/Caddyfile，把域名改成你的，然后 systemctl reload caddy
+# 前提：域名 A 记录指向本机，80/443 已放行（Caddy 自动签发/续期证书）
+# =============================================================================
+voice.example.com {
+	encode gzip
+
+	# 可选：站点密码墙（保护首页与房间列表，邀请链接不受影响）。
+	# 哈希生成：caddy hash-password --plaintext '你的密码'
+	# basic_auth / {
+	# 	admin $2a$14$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+	# }
+
+	# Go 后端 REST API
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Go 后端成员同步 WebSocket（长连接，加大超时）
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# LiveKit 信令。必须用 handle_path——剥掉 /livekit 前缀再转发，
+	# 用 handle 会把 /livekit/rtc 原样传给 LiveKit 导致 404
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+
+	# 页面本体（SvelteKit adapter-node 容器）
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

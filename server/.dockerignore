@@ -1,0 +1,6 @@
+# 构建上下文排除：产物与本地数据不进镜像
+*.exe
+*.exe~
+voice-rooms-linux
+auth.db
+tools/

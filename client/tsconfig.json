@@ -1,0 +1,13 @@
+{
+	"extends": "$app/tsconfig",
+	"compilerOptions": {
+		"strict": true,
+		// TS 对 package.json "imports" 字段的解析不会做目录索引/扩展名补全，
+		// 这里显式声明 #lib 别名，保证 svelte-check / tsc 都能解析
+		"paths": {
+			"#lib": ["./src/lib/index.ts"],
+			"#lib/*": ["./src/lib/*"]
+		}
+	},
+	"include": ["src", "vite.config.ts"]
+}

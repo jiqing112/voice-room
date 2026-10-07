@@ -1,0 +1,25 @@
+# 生产环境 LiveKit 配置（区别于开发用的 livekit.yaml）
+# 部署到 /opt/voice-rooms/livekit.production.yaml
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # 公网服务器必须开：让 LiveKit 识别真实外网 IP（NAT 后的地址候选）
+  use_external_ip: true
+
+# !! 换掉开发默认密钥：生成方法 openssl rand -hex 24
+keys:
+  CHANGE_ME_KEY: CHANGE_ME_SECRET_AT_LEAST_32_CHARS
+
+logging:
+  level: info
+
+# 可选：TURN 中继。双方都处于严格 NAT/防火墙后（如公司网络对 UDP 不友好）时才需要。
+# 需要一个域名和对应证书：
+# turn:
+#   enabled: true
+#   domain: turn.your-domain.com
+#   tls_port: 5349
+#   cert: /etc/livekit/turn.crt
+#   key: /etc/livekit/turn.key

@@ -1,0 +1,34 @@
+# ---- Go 构建产物与本地数据 ----
+server/*.exe
+server/*.exe~
+server/voice-rooms-linux
+server/auth.db
+
+# ---- Node / SvelteKit ----
+client/node_modules/
+client/.svelte-kit/
+client/build/
+# 开发自签证书（每人用 client/scripts/gen-certs.sh 自己生成，含私钥，不进仓库）
+client/.certs/
+
+# ---- 打包与日志 ----
+dist/
+pack.log
+*.log
+
+# ---- Docker 部署本地配置 ----
+deploy/docker/.env
+
+# ---- 编辑器/系统杂项 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- 部署临时工具 ----
+deploy/ssh_helper.py
+
+# ---- SQLite 运行时文件 ----
+server/auth.db*
+# ---- Python ----
+__pycache__/

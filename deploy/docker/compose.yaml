@@ -1,0 +1,83 @@
+# =============================================================================
+# voice-rooms 生产编排：LiveKit + Go 后端 + SvelteKit 前端，一条命令起全栈
+#
+#   cp .env.example .env   # 填域名、生成密钥（见 .env.example 注释）
+#   docker compose up -d --build
+#
+# 对外只暴露媒体端口（7881 TCP + 50000-50100 UDP）；
+# 页面/API/信令绑定在 127.0.0.1，由宿主机上的 Caddy 反代对外提供 TLS。
+# 反代配置样例见同目录 Caddyfile.example。
+# =============================================================================
+name: voice-rooms
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    environment:
+      # 密钥经环境变量注入（与 server 共享同一对 .env 值），不写进配置文件
+      LIVEKIT_KEYS: "${LIVEKIT_KEY:?请在 .env 中设置 LIVEKIT_KEY}: ${LIVEKIT_SECRET:?请在 .env 中设置 LIVEKIT_SECRET}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881/tcp"                 # WebRTC over TCP 回退（UDP 被堵时用）
+      - "50000-50100:50000-50100/udp"   # 语音媒体流，必须对公网开放
+      - "127.0.0.1:7880:7880"           # 信令：只绑回环，交给宿主机 Caddy 反代
+    restart: unless-stopped
+
+  server:
+    build: ../../server
+    environment:
+      GIN_MODE: release
+      TZ: ${TZ:-Asia/Shanghai}
+      # 容器内必须监听全部网卡：Docker 端口发布的流量走容器网卡而非容器回环；
+      # 发布端口本身只绑宿主机 127.0.0.1，安全性不受影响
+      HOST: 0.0.0.0
+      LIVEKIT_API_KEY: ${LIVEKIT_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_SECRET}
+      # 浏览器连接 LiveKit 的对外信令地址（经宿主机 Caddy 的 /livekit 路径代理）
+      LIVEKIT_URL: ${LIVEKIT_URL:?请在 .env 中设置 LIVEKIT_URL（形如 wss://域名/livekit）}
+      # 容器网络内直连 LiveKit 管理 API（健康检查）
+      LIVEKIT_HTTP_URL: http://livekit:7880
+      WS_ALLOWED_ORIGIN: ${PUBLIC_ORIGIN:?请在 .env 中设置 PUBLIC_ORIGIN（形如 https://域名）}
+      # 账号库持久化在 named volume（镜像内固定 AUTH_DB=/data/auth.db）
+      # —— 可选开关，见 .env.example ——
+      AUTH_REGISTER_ENABLED: ${AUTH_REGISTER_ENABLED:-false}
+      CREATE_REQUIRE_ACCOUNT: ${CREATE_REQUIRE_ACCOUNT:-false}
+      MAIL_VERIFY_ENABLED: ${MAIL_VERIFY_ENABLED:-false}
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-465}
+      MAIL_SMTP_USER: ${MAIL_SMTP_USER:-}
+      MAIL_SMTP_PASS: ${MAIL_SMTP_PASS:-}
+    volumes:
+      - server-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - livekit
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    build: ../../client
+    environment:
+      # SvelteKit adapter-node 需要知道对外源（origin 相关逻辑在生产行为才可靠）
+      ORIGIN: ${PUBLIC_ORIGIN:?请在 .env 中设置 PUBLIC_ORIGIN}
+      PORT: 3000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - server
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  server-data:

@@ -1,0 +1,19 @@
+# LiveKit 容器配置。密钥不在这里——由 compose 从 .env 读入
+# LIVEKIT_KEYS 环境变量注入（与 Go 后端共享同一对）。
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # 公网服务器必须开：让 LiveKit 识别真实外网 IP（NAT 后的地址候选）
+  use_external_ip: true
+logging:
+  level: info
+
+# 双方都在严格 NAT/防火墙后（UDP 出不去）才需要 TURN，需独立域名和证书：
+# turn:
+#   enabled: true
+#   domain: turn.your-domain.com
+#   tls_port: 5349
+#   cert: /etc/livekit/turn.crt
+#   key: /etc/livekit/turn.key
