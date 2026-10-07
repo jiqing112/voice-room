@@ -57,9 +57,18 @@ Docker 方式共三步：clone → `cp .env.example .env` 填域名（或公网 
 
 ## 反向代理与 SSL 证书
 
-三条反代规则（详细原理见 [deploy/DEPLOY.md](deploy/DEPLOY.md)）：
-`/` → 3000（页面）；`/api/*`、`/ws` → 8080（Go）；`/livekit/*` → 7880 且**必须剥前缀**
-（Caddy 用 `handle_path`，nginx 的 `proxy_pass` 结尾带斜杠），否则信令 404。
+反代（Caddy/nginx）只监听 443（80 做 HTTPS 跳转），把不同**路径**转发到本机**三个端口**：
+
+| 浏览器发出的请求 | 反代转发到 | 端口上跑的是什么 | 说明 |
+|---|---|---|---|
+| `https://域名/` | `127.0.0.1:3000` | SvelteKit 页面 | 所有未匹配路径都归它 |
+| `https://域名/api/rooms` | `127.0.0.1:8080` | Go 后端 REST API | 前缀原样透传 |
+| `wss://域名/ws` | `127.0.0.1:8080` | Go 后端成员同步 WebSocket | 与 API 同端口，靠路径区分 |
+| `wss://域名/livekit/rtc` | `127.0.0.1:7880`/`rtc` | LiveKit 信令 WebSocket | **必须剥掉 `/livekit` 前缀**，否则 404 |
+| 语音媒体（不是网页请求） | 浏览器**直连** `7881/TCP + 50000-50100/UDP` | LiveKit 媒体 | **不经反代**，安全组直接放行 |
+
+要点：反代只接触 **3000 / 8080 / 7880** 三个回环端口；**7881 和 UDP 段是媒体直连
+端口，反代管不着**——这正是语音延迟低的原因，也是安全组必须单独放行它们的原因。
 
 证书按条件四选一（Caddy 全自动，无需 certbot）：
 
@@ -92,6 +101,59 @@ voice.example.com {
 		reverse_proxy 127.0.0.1:3000
 	}
 }
+```
+
+</details>
+
+用 nginx 的话等价配置如下（WebSocket 升级头三件套 + `/livekit/` 结尾斜杠剥前缀是两处最易错点）：
+
+<details>
+<summary>点开查看 /etc/nginx/conf.d/voicerooms.conf</summary>
+
+```nginx
+map $http_upgrade $connection_upgrade {
+	default upgrade;
+	''      close;
+}
+
+server {
+	listen 443 ssl;
+	http2 on;
+	server_name voice.example.com;
+	ssl_certificate     /etc/letsencrypt/live/voice.example.com/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/voice.example.com/privkey.pem;
+
+	# 页面 → 3000
+	location / {
+		proxy_pass http://127.0.0.1:3000;
+		proxy_set_header Host $host;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+	}
+	# API → 8080
+	location /api/ {
+		proxy_pass http://127.0.0.1:8080;
+		proxy_set_header Host $host;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+	}
+	# 成员同步 WebSocket → 8080（长连接要加大超时）
+	location /ws {
+		proxy_pass http://127.0.0.1:8080;
+		proxy_http_version 1.1;
+		proxy_set_header Upgrade $http_upgrade;
+		proxy_set_header Connection $connection_upgrade;
+		proxy_read_timeout 3600s;
+	}
+	# LiveKit 信令 → 7880；proxy_pass 结尾斜杠 = 剥掉 /livekit 前缀
+	location /livekit/ {
+		proxy_pass http://127.0.0.1:7880/;
+		proxy_http_version 1.1;
+		proxy_set_header Upgrade $http_upgrade;
+		proxy_set_header Connection $connection_upgrade;
+		proxy_read_timeout 3600s;
+	}
+}
+# 80 → 443 跳转的 server 块见 deploy/nginx/voicerooms.conf
 ```
 
 </details>
