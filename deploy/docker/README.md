@@ -106,7 +106,7 @@ docker compose -f compose.all-in-one.yaml up -d --build
 
 域名 A 记录指向服务器、80/443 放行，`/etc/caddy/Caddyfile` 全文如下
 （改域名即可，证书签发/续期全自动。`reverse_proxy` 指向的是 Docker 部署的
-宿主机端口（=容器端口+40000）；若是 systemd 源码/二进制部署（无容器），
+宿主机端口（=容器端口+40000）；若是无容器部署（方式③二进制 / 方式④源码），
 改回 8080/3000/7880）：
 
 ```caddyfile

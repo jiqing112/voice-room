@@ -69,6 +69,28 @@ npm run dev
 开发期 Vite 把 `/api` 与 `/ws` 代理到 Go 后端（`API_PROXY_TARGET` 环境变量可改目标），
 无需配置 CORS。
 
+### 自定义端口（所有组件都可改）
+
+本地部署没有反代和容器，浏览器始终只访问前端 dev server 一个口（`/api`、`/ws`、
+`/livekit` 都由 Vite 代为转发），所以改后端/LiveKit 端口不影响浏览器访问的端口：
+
+| 组件 | 默认 | 怎么改 | 需要联动的地方 |
+|---|---|---|---|
+| 前端 dev server | `5173` | `npm run dev -- --port 5174`（暴露局域网再加 `--host`） | 无 |
+| Go 后端 | `127.0.0.1:8080` | `PORT=8090 go run .` | 前端启动加 `API_PROXY_TARGET=http://localhost:8090` |
+| LiveKit 信令 | `7880` | 改 `livekit.yaml` 的 `port:` | Go 的 `LIVEKIT_URL` / `LIVEKIT_HTTP_URL`、前端的 `LIVEKIT_PROXY_TARGET` 三处跟着改 |
+| LiveKit 媒体 | TCP `7881` / UDP `50000-50100` | 改 `livekit.yaml` 的 `rtc` 段 | 无（浏览器直连，一般不用动） |
+
+例：后端换到 8090、LiveKit 信令换到 7870：
+
+```bash
+# 1. livekit.yaml: port: 7870，然后 docker compose up -d
+# 2. 后端
+cd server && LIVEKIT_URL=ws://localhost:7870 LIVEKIT_HTTP_URL=http://localhost:7870 PORT=8090 go run .
+# 3. 前端
+cd ../client && API_PROXY_TARGET=http://localhost:8090 LIVEKIT_PROXY_TARGET=http://localhost:7870 npm run dev
+```
+
 ### 局域网多人联调（手机/第二台电脑互听）
 
 麦克风 API 只在**安全上下文**（HTTPS 或 localhost）暴露——局域网 IP 明文 HTTP
