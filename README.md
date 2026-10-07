@@ -17,11 +17,16 @@ SvelteKit 5 前端负责界面。设计给朋友间自建部署，一台 1C2G �
 
 ```
 浏览器 ──https──▶ Caddy 反代（443，TLS 终止）
-                    ├─ /             → SvelteKit 页面    127.0.0.1:3000
-                    ├─ /api、/ws     → Go 后端           127.0.0.1:8080
-                    └─ /livekit/*    → LiveKit 信令      127.0.0.1:7880（剥前缀）
+                    ├─ /             → SvelteKit 页面    127.0.0.1:43000（容器内 3000）
+                    ├─ /api、/ws     → Go 后端           127.0.0.1:48080（容器内 8080）
+                    └─ /livekit/*    → LiveKit 信令      127.0.0.1:47880（容器内 7880，剥前缀）
 浏览器 ══ WebRTC 语音媒体直连（UDP 50000-50100 / TCP 7881）══▶ LiveKit，不经反代
 ```
+
+> **端口约定**：容器内端口固定（3000/8080/7880/7881/UDP 段）；Docker 部署的
+> 宿主机发布端口 = 容器端口 + 40000（避开常用端口，可在 compose `ports:` 左边改，
+> 同步 Caddyfile 即可）。systemd 部署没有映射层，服务直接监听 3000/8080/7880。
+> 媒体端口 7881/UDP 段宿主机必须与容器 1:1，要改需同步 `livekit.yaml` 的 rtc 段。
 
 ## 快速开始（本地试玩）
 
@@ -57,18 +62,21 @@ Docker 方式共三步：clone → `cp .env.example .env` 填域名（或公网 
 
 ## 反向代理与 SSL 证书
 
-反代（Caddy/nginx）只监听 443（80 做 HTTPS 跳转），把不同**路径**转发到本机**三个端口**：
+反代（Caddy/nginx）只监听 443（80 做 HTTPS 跳转），把不同**路径**转发到本机的服务端口。
+**容器内端口固定**，Docker 部署的宿主机端口 = 容器端口 + 40000；systemd 部署无容器层，
+服务直接监听容器内那组端口：
 
-| 浏览器发出的请求 | 反代转发到 | 端口上跑的是什么 | 说明 |
-|---|---|---|---|
-| `https://域名/` | `127.0.0.1:3000` | SvelteKit 页面 | 所有未匹配路径都归它 |
-| `https://域名/api/rooms` | `127.0.0.1:8080` | Go 后端 REST API | 前缀原样透传 |
-| `wss://域名/ws` | `127.0.0.1:8080` | Go 后端成员同步 WebSocket | 与 API 同端口，靠路径区分 |
-| `wss://域名/livekit/rtc` | `127.0.0.1:7880`/`rtc` | LiveKit 信令 WebSocket | **必须剥掉 `/livekit` 前缀**，否则 404 |
-| 语音媒体（不是网页请求） | 浏览器**直连** `7881/TCP + 50000-50100/UDP` | LiveKit 媒体 | **不经反代**，安全组直接放行 |
+| 浏览器发出的请求 | Docker 部署：反代转发到 | systemd 部署：转发到 | 容器内端口 | 服务 |
+|---|---|---|---|---|
+| `https://域名/` | `127.0.0.1:43000` | `127.0.0.1:3000` | 3000 | SvelteKit 页面 |
+| `https://域名/api/rooms` | `127.0.0.1:48080` | `127.0.0.1:8080` | 8080 | Go 后端 REST API |
+| `wss://域名/ws` | `127.0.0.1:48080` | `127.0.0.1:8080` | 8080 | 成员同步 WebSocket |
+| `wss://域名/livekit/rtc` | `127.0.0.1:47880/rtc` | `127.0.0.1:7880/rtc` | 7880 | LiveKit 信令（**必须剥 `/livekit` 前缀**，否则 404） |
+| 语音媒体 | 浏览器**直连** `7881/TCP + 50000-50100/UDP`（宿主机=容器 1:1） | 同左 | 同左 | **不经反代**，安全组直接放行 |
 
-要点：反代只接触 **3000 / 8080 / 7880** 三个回环端口；**7881 和 UDP 段是媒体直连
-端口，反代管不着**——这正是语音延迟低的原因，也是安全组必须单独放行它们的原因。
+要点：反代只接触 **43000 / 48080 / 47880**（Docker）或 **3000 / 8080 / 7880**
+（systemd）三组回环端口；**7881 和 UDP 段是媒体直连端口，反代管不着**——
+这也是安全组必须单独放行它们的原因。
 
 证书按条件四选一（Caddy 全自动，无需 certbot）：
 
@@ -88,17 +96,17 @@ Docker 方式共三步：clone → `cp .env.example .env` 填域名（或公网 
 voice.example.com {
 	encode gzip
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080   # Docker 宿主机端口（容器内 8080）；systemd 部署用 8080
 	}
 	handle /ws {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 	# 必须用 handle_path：剥掉 /livekit 前缀，用 handle 会信令 404
 	handle_path /livekit/* {
-		reverse_proxy 127.0.0.1:7880
+		reverse_proxy 127.0.0.1:47880   # Docker 宿主机端口（容器内 7880）；systemd 部署用 7880
 	}
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:43000   # Docker 宿主机端口（容器内 3000）；systemd 部署用 3000
 	}
 }
 ```
@@ -123,30 +131,30 @@ server {
 	ssl_certificate     /etc/letsencrypt/live/voice.example.com/fullchain.pem;
 	ssl_certificate_key /etc/letsencrypt/live/voice.example.com/privkey.pem;
 
-	# 页面 → 3000
+	# 页面 → 宿主机 43000（Docker；systemd 为 3000）
 	location / {
-		proxy_pass http://127.0.0.1:3000;
+		proxy_pass http://127.0.0.1:43000;
 		proxy_set_header Host $host;
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 		proxy_set_header X-Forwarded-Proto $scheme;
 	}
-	# API → 8080
+	# API → 宿主机 48080（Docker；systemd 为 8080）
 	location /api/ {
-		proxy_pass http://127.0.0.1:8080;
+		proxy_pass http://127.0.0.1:48080;
 		proxy_set_header Host $host;
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 	}
-	# 成员同步 WebSocket → 8080（长连接要加大超时）
+	# 成员同步 WebSocket → 宿主机 48080（长连接要加大超时）
 	location /ws {
-		proxy_pass http://127.0.0.1:8080;
+		proxy_pass http://127.0.0.1:48080;
 		proxy_http_version 1.1;
 		proxy_set_header Upgrade $http_upgrade;
 		proxy_set_header Connection $connection_upgrade;
 		proxy_read_timeout 3600s;
 	}
-	# LiveKit 信令 → 7880；proxy_pass 结尾斜杠 = 剥掉 /livekit 前缀
+	# LiveKit 信令 → 宿主机 47880（Docker；systemd 为 7880）；结尾斜杠 = 剥前缀
 	location /livekit/ {
-		proxy_pass http://127.0.0.1:7880/;
+		proxy_pass http://127.0.0.1:47880/;
 		proxy_http_version 1.1;
 		proxy_set_header Upgrade $http_upgrade;
 		proxy_set_header Connection $connection_upgrade;

@@ -35,22 +35,22 @@
 
 	# Go 后端 REST API
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 
 	# Go 后端成员同步 WebSocket（长连接）
 	handle /ws {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 
 	# LiveKit 信令。必须用 handle_path——剥掉 /livekit 前缀再转发，
 	# 用 handle 会把 /livekit/rtc 原样传给 LiveKit 导致 404
 	handle_path /livekit/* {
-		reverse_proxy 127.0.0.1:7880
+		reverse_proxy 127.0.0.1:47880
 	}
 
 	# 页面本体（SvelteKit adapter-node 容器）
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:43000
 	}
 }

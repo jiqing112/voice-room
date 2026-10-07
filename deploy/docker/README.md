@@ -27,13 +27,13 @@
   │ https://域名-or-公网IP（443，宿主机 Caddy 终止 TLS）
   ▼
 宿主机 Caddy（Docker 外部）
-  ├─ /            → 127.0.0.1:3000  web 容器（SvelteKit）
-  ├─ /api、/ws    → 127.0.0.1:8080  server 容器（Go）
-  └─ /livekit/*   → 127.0.0.1:7880  livekit 容器（信令）
-浏览器 ══ WebRTC 媒体直连 ══▶ 宿主机 7881/TCP + 50000-50100/UDP（端口映射进 livekit 容器）
+  ├─ /            → 127.0.0.1:43000 → web 容器（容器内 3000，SvelteKit）
+  ├─ /api、/ws    → 127.0.0.1:48080 → server 容器（容器内 8080，Go）
+  └─ /livekit/*   → 127.0.0.1:47880 → livekit 容器（容器内 7880，信令，剥前缀）
+浏览器 ══ WebRTC 媒体直连 ══▶ 宿主机 7881/TCP + 50000-50100/UDP（1:1 映射进 livekit 容器）
 ```
 
-页面/API/信令端口全部只绑定 `127.0.0.1`（外部无法绕过 Caddy 直连）；
+页面/API/信令的宿主机端口只绑定 `127.0.0.1`（外部无法绕过 Caddy 直连）；
 只有媒体端口对公网开放。账号库 `auth.db` 持久化在 named volume `server-data`。
 
 ## 单容器 all-in-one 布局
@@ -59,24 +59,43 @@ docker compose -f compose.all-in-one.yaml up -d --build
 
 ## 反向代理与 SSL 证书
 
-### 反代什么端口
+### 反代什么端口（容器内外对照）
 
 反代（宿主机 Caddy/nginx）只监听 443（80 做 HTTPS 跳转），把不同**路径**转发到
-本机三个端口——这正是 compose 里 7880/8080/3000 只绑 `127.0.0.1` 的原因：
+宿主机的三个端口。**容器内端口固定不变；宿主机端口 = 容器端口 + 40000**
+（刻意避开 8080/3000 等常用端口，防冲突。想改宿主机端口只需动 compose 的
+`ports:` 左半边并同步 Caddyfile）：
 
-| 浏览器发出的请求 | 反代转发到 | 端口上跑的是什么 | 说明 |
+| 容器内端口（服务监听，固定不动） | 宿主机发布端口（compose `ports:` 左边） | 对公网 | 里面是什么 |
 |---|---|---|---|
-| `https://域名/` | `127.0.0.1:3000` | SvelteKit 页面（web 容器） | 所有未匹配路径都归它 |
-| `https://域名/api/rooms` | `127.0.0.1:8080` | Go 后端 REST API（server 容器） | 前缀原样透传 |
-| `wss://域名/ws` | `127.0.0.1:8080` | Go 后端成员同步 WebSocket | 与 API 同端口，靠路径区分 |
-| `wss://域名/livekit/rtc` | `127.0.0.1:7880`/`rtc` | LiveKit 信令（livekit 容器） | **必须剥掉 `/livekit` 前缀**，否则 404 |
-| 语音媒体（不是网页请求） | 浏览器**直连** `7881/TCP + 50000-50100/UDP` | LiveKit 媒体 | **不经反代**，compose 已把这些端口对公网发布 |
+| web 容器 `0.0.0.0:3000` | `127.0.0.1:43000` | 否，仅 Caddy 用 | SvelteKit 页面 |
+| server 容器 `0.0.0.0:8080` | `127.0.0.1:48080` | 否，仅 Caddy 用 | Go 后端 REST API + 成员同步 WebSocket |
+| livekit 容器 `7880` | `127.0.0.1:47880` | 否，仅 Caddy 用 | LiveKit 信令（外部经 `https://域名/livekit` 访问） |
+| livekit 容器 `7881/tcp` | `7881`（**必须 1:1**） | **是** | WebRTC over TCP 回退 |
+| livekit 容器 `50000-50100/udp` | `50000-50100/udp`（**必须 1:1**） | **是** | 语音媒体流 |
 
-要点：反代只接触 **3000 / 8080 / 7880** 三个回环端口；**7881 和 UDP 段是媒体
-直连端口，反代管不着**——安全组必须单独放行它们，这是"连上但听不见"的头号原因。
+按请求视角看反代转发了什么：
+
+| 浏览器发出的请求 | 反代转发到（宿主机端口） | 说明 |
+|---|---|---|
+| `https://域名/` | `127.0.0.1:43000` | 页面 |
+| `https://域名/api/rooms` | `127.0.0.1:48080` | REST API，前缀原样透传 |
+| `wss://域名/ws` | `127.0.0.1:48080` | 成员同步 WebSocket，与 API 同端口靠路径区分 |
+| `wss://域名/livekit/rtc` | `127.0.0.1:47880/rtc` | 信令，**必须剥 `/livekit` 前缀**否则 404 |
+| 语音媒体 | 不经反代，浏览器直连 `7881/TCP + UDP 段` | 安全组直接放行 |
+
+要点：反代只接触 **43000 / 48080 / 47880** 三个宿主机回环端口；**7881 和 UDP 段
+是媒体直连端口，反代管不着**——安全组必须单独放行它们，这是"连上但听不见"的
+头号原因。两条改端口规则：
+
+- **宿主机三个回环端口**（43000/48080/47880）：随便改，compose `ports:` 左半边
+  + Caddyfile 的 `reverse_proxy` 两处同步即可；
+- **媒体端口 7881/UDP 段**：宿主机侧必须与容器内 **1:1**（LiveKit 对外宣告的
+  候选端口就是它们，错位语音就不通），要改必须同时改 `livekit.yaml` 的
+  `rtc.port_range_start/end` 与 `rtc.tcp_port`。
 
 > **表里的 `127.0.0.1` 是宿主机（Caddy 所在机器）的回环，不是容器 IP。**
-> 链路是：Caddy 连宿主机回环 → compose 的端口发布（如 `127.0.0.1:8080:8080`）
+> 链路是：Caddy 连宿主机回环 → compose 的端口发布（如 `127.0.0.1:48080:8080`）
 > 把流量转交进容器。容器内部有自己的 IP（172.17.x.x），但流量进入容器走的是
 > 它的**网卡而非容器回环**，所以容器内的服务必须监听 `0.0.0.0`（server 容器
 > 已用环境变量 `HOST=0.0.0.0` 配好；反之，容器内绑 127.0.0.1 会收不到任何
@@ -86,7 +105,9 @@ docker compose -f compose.all-in-one.yaml up -d --build
 ### 方案 A：有域名（推荐，证书全自动）
 
 域名 A 记录指向服务器、80/443 放行，`/etc/caddy/Caddyfile` 全文如下
-（改域名即可，证书签发/续期全自动）：
+（改域名即可，证书签发/续期全自动。`reverse_proxy` 指向的是 Docker 部署的
+宿主机端口（=容器端口+40000）；若是 systemd 源码/二进制部署（无容器），
+改回 8080/3000/7880）：
 
 ```caddyfile
 voice.example.com {
@@ -94,20 +115,20 @@ voice.example.com {
 
 	# REST API → Go 后端容器（8080）
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 	# 成员同步 WebSocket → 同一 Go 后端（长连接）
 	handle /ws {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 	# LiveKit 信令 → livekit 容器（7880）
 	# 必须用 handle_path：剥掉 /livekit 前缀再转发，用 handle 会信令 404
 	handle_path /livekit/* {
-		reverse_proxy 127.0.0.1:7880
+		reverse_proxy 127.0.0.1:47880
 	}
 	# 其余全部 → SvelteKit 页面容器（3000）
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:43000
 	}
 }
 ```
@@ -146,16 +167,16 @@ curl -fsSL https://github.com/caddyserver/caddy/releases/download/v2.11.2/caddy_
 	encode gzip
 
 	handle /api/* {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 	handle /ws {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy 127.0.0.1:48080
 	}
 	handle_path /livekit/* {
-		reverse_proxy 127.0.0.1:7880
+		reverse_proxy 127.0.0.1:47880
 	}
 	handle {
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:43000
 	}
 }
 ```
@@ -234,9 +255,9 @@ incus config set voice-rooms security.syscalls.intercept.mknod=true
 
 ```bash
 # 先停掉外层旧的 compose 栈（监听端口要让出来），再添加：
-incus config device add voice-rooms p3000 proxy listen=tcp:127.0.0.1:3000 connect=tcp:127.0.0.1:3000
-incus config device add voice-rooms p8080 proxy listen=tcp:127.0.0.1:8080 connect=tcp:127.0.0.1:8080
-incus config device add voice-rooms p7880 proxy listen=tcp:127.0.0.1:7880 connect=tcp:127.0.0.1:7880
+incus config device add voice-rooms p43000 proxy listen=tcp:127.0.0.1:43000 connect=tcp:127.0.0.1:43000
+incus config device add voice-rooms p48080 proxy listen=tcp:127.0.0.1:48080 connect=tcp:127.0.0.1:48080
+incus config device add voice-rooms p47880 proxy listen=tcp:127.0.0.1:47880 connect=tcp:127.0.0.1:47880
 incus config device add voice-rooms rtc-tcp proxy listen=tcp:0.0.0.0:7881 connect=tcp:127.0.0.1:7881 nat=true
 incus config device add voice-rooms rtc-udp proxy listen=udp:0.0.0.0:50000-50100 connect=udp:127.0.0.1:50000-50100 nat=true
 ```
