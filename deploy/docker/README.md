@@ -1,7 +1,17 @@
 # Docker 一键部署（全栈容器化）
 
-三个服务（LiveKit 媒体、Go 后端、SvelteKit 前端）全部跑在 Docker 里，
-`docker compose up -d --build` 一条命令起全栈；宿主机保留一个**外部 Caddy**
+三种布局任选其一（后两者端口相同，不要同时跑）：
+
+| 布局 | 文件 | 适合 |
+|---|---|---|
+| 三容器（默认） | `compose.yaml` | 标准做法，组件独立、日志分明 |
+| **单容器 all-in-one** | `compose.all-in-one.yaml` | 最简部署，一个镜像一条命令；家庭服务器/极简党 |
+| systemd 二进制 | 上级目录 `deploy-linux.sh` | 不用 Docker 的裸机 |
+
+## 三容器布局（默认）
+
+三个服务（LiveKit 媒体、Go 后端、SvelteKit 前端）分别一个容器，
+`docker compose up -d --build` 起全栈；宿主机保留一个**外部 Caddy**
 做反代和 TLS。服务器上不需要装 Go/Node，只需要 Docker。
 
 支持两种对外方式（反代配置二选一）：
@@ -25,6 +35,27 @@
 
 页面/API/信令端口全部只绑定 `127.0.0.1`（外部无法绕过 Caddy 直连）；
 只有媒体端口对公网开放。账号库 `auth.db` 持久化在 named volume `server-data`。
+
+## 单容器 all-in-one 布局
+
+三个服务打成一个镜像（`Dockerfile.all-in-one`），容器内由
+`entrypoint-all-in-one.sh` 同时守护三个进程，**任一进程退出 → 整个容器退出 →
+Docker restart 策略把三个一起拉起**（fail-fast，避免"半死"状态）。已在
+Debian 13 + Docker 实测：三服务健康检查全绿，杀掉任一进程 2 秒内整容器退出。
+
+```bash
+# .env 与三容器方案共用同一份；只换 compose 文件
+docker compose -f compose.all-in-one.yaml up -d --build
+```
+
+与三容器布局的差异：
+
+- 镜像约 340MB（node 基础镜像 + 三件套）；环境变量、`.env`、反代、证书完全一致，
+  仅内部互联从 `http://livekit:7880` 变成 `http://127.0.0.1:7880`（compose 已写好）；
+- 对外端口发布规则不变：7881/TCP + UDP 段对公网，7880/8080/3000 只绑回环给 Caddy；
+- 取舍：换来了"一条 docker run 也能跑"的最简心智模型，失去了按组件独立
+  升级/扩缩容的能力（升级任何一部分都是整容器重建，语音会瞬断几秒）。
+  个人/朋友自用无所谓；要认真运营建议三容器。
 
 ## 反代配置（二选一）
 

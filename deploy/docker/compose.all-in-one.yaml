@@ -1,0 +1,45 @@
+# =============================================================================
+# all-in-one 单容器编排：LiveKit + Go + SvelteKit 全在一个容器里
+#
+#   docker compose -f compose.all-in-one.yaml up -d --build
+#
+# 与默认的三容器 compose.yaml 二选一（端口相同，不要同时跑）。
+# 环境变量与三容器方案共用同一份 .env。
+# 注意：内部互联走 127.0.0.1（同容器），LIVEKIT_HTTP_URL 固定为
+# http://127.0.0.1:7880，与三容器方案的 http://livekit:7880 不同。
+# =============================================================================
+name: voice-rooms
+
+services:
+  voice-rooms:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.all-in-one
+    image: voice-rooms-all-in-one
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      LIVEKIT_API_KEY: ${LIVEKIT_KEY:?请在 .env 中设置 LIVEKIT_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_SECRET:?请在 .env 中设置 LIVEKIT_SECRET}
+      LIVEKIT_URL: ${LIVEKIT_URL:?请在 .env 中设置 LIVEKIT_URL（形如 wss://域名/livekit）}
+      WS_ALLOWED_ORIGIN: ${PUBLIC_ORIGIN:?请在 .env 中设置 PUBLIC_ORIGIN（形如 https://域名）}
+      ORIGIN: ${PUBLIC_ORIGIN}
+      AUTH_REGISTER_ENABLED: ${AUTH_REGISTER_ENABLED:-false}
+      CREATE_REQUIRE_ACCOUNT: ${CREATE_REQUIRE_ACCOUNT:-false}
+      MAIL_VERIFY_ENABLED: ${MAIL_VERIFY_ENABLED:-false}
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-465}
+      MAIL_SMTP_USER: ${MAIL_SMTP_USER:-}
+      MAIL_SMTP_PASS: ${MAIL_SMTP_PASS:-}
+    volumes:
+      - server-data:/data
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881/tcp"                 # WebRTC over TCP 回退
+      - "50000-50100:50000-50100/udp"   # 语音媒体流，必须对公网开放
+      - "127.0.0.1:7880:7880"           # 信令：只绑回环，交给宿主机 Caddy 反代
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+volumes:
+  server-data:

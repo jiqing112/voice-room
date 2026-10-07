@@ -227,6 +227,7 @@ go run ./server/tools/audiobot "房间名" 60
 
 - **Docker 一键部署**（推荐，服务器只需 Docker + 外部 Caddy）：
   见 [deploy/docker/README.md](deploy/docker/README.md)，`docker compose up -d --build` 一条命令起全栈。
+  布局二选一：**三容器**（默认，组件独立）或**单容器 all-in-one**（`compose.all-in-one.yaml`，最简）。
 - **systemd 二进制部署**：完整分步指南见 [deploy/DEPLOY.md](deploy/DEPLOY.md)，
   或开发机 `bash deploy/push.sh root@服务器IP` 一条命令打包+上传+部署。
 

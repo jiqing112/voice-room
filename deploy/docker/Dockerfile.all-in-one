@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# all-in-one 镜像：LiveKit + Go 后端 + SvelteKit 前端打进一个容器
+#
+#   docker compose -f compose.all-in-one.yaml up -d --build
+#
+# 与三容器方案二选一。单个容器内三个进程由 entrypoint-all-in-one.sh 守护：
+# 任一进程退出 → 容器退出 → docker restart 策略拉起全部（fail-fast 模式）。
+# =============================================================================
+ARG LK_VERSION=1.13.7
+
+# ---------- 1. 编译 Go 后端（静态二进制） ----------
+FROM golang:1.26-alpine AS server-build
+WORKDIR /src
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+COPY server/ .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/voice-rooms .
+
+# ---------- 2. 构建前端（SvelteKit adapter-node + 生产依赖） ----------
+FROM node:22-alpine AS web-build
+WORKDIR /app
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
+COPY client/ .
+RUN npm run build \
+	&& npm ci --omit=dev --ignore-scripts
+
+# ---------- 3. 下载 LiveKit 官方二进制 ----------
+FROM alpine:3.21 AS livekit-dl
+ARG LK_VERSION
+RUN mkdir -p /out \
+	&& wget -qO- "https://github.com/livekit/livekit/releases/download/v${LK_VERSION}/livekit_${LK_VERSION}_linux_amd64.tar.gz" \
+		| tar xz -C /out livekit-server
+
+# ---------- 4. 运行镜像（node 基础镜像同时承载三个进程） ----------
+FROM node:22-alpine
+RUN apk add --no-cache ca-certificates tzdata \
+	&& mkdir -p /data && chown node:node /data
+COPY --from=livekit-dl /out/livekit-server /usr/local/bin/
+COPY --from=server-build /out/voice-rooms /usr/local/bin/
+COPY --from=web-build /app/build /app/web/build
+COPY --from=web-build /app/node_modules /app/web/node_modules
+COPY --from=web-build /app/package.json /app/web/package.json
+COPY deploy/docker/entrypoint-all-in-one.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && chown -R node:node /app
+
+# 进程内默认值：后端连容器内的 LiveKit；账号库持久化到 /data
+ENV AUTH_DB=/data/auth.db \
+	LIVEKIT_HTTP_URL=http://127.0.0.1:7880 \
+	GIN_MODE=release \
+	NODE_ENV=production
+USER node
+EXPOSE 3000 8080 7880 7881 50000-50100/udp
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+	CMD wget -q -O /dev/null http://127.0.0.1:8080/api/health && wget -q -O /dev/null http://127.0.0.1:3000/
+ENTRYPOINT ["/app/entrypoint.sh"]

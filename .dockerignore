@@ -1,0 +1,17 @@
+# 构建上下文排除：all-in-one 镜像以仓库根为上下文，排除本地开发产物
+# （其余小 context 构建各自的 .dockerignore 不受影响）
+.git
+dist
+pack.log
+deploy/ssh_helper.py
+deploy/__pycache__
+client/node_modules
+client/.svelte-kit
+client/build
+client/.certs
+client/.vscode
+server/auth.db*
+server/*.exe
+server/*.exe~
+server/voice-rooms-linux
+server/tools
