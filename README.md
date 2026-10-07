@@ -221,21 +221,135 @@ go run ./server/tools/audiobot "房间名" 60
 - 房间/成员仅存内存，进程重启即清空（账号库 `auth.db` 除外，SQLite 持久化）
 - 房间页会向同房间成员广播自己的公网 IP（成员卡片"网络信息"弹窗），邀请链接可转发，介意者请知悉
 
+## 部署到服务器
+
+部署分两件事：**跑起来**（二选一）+ **反代与证书**（见下一节，无论哪种方式都一样）。
+
+- **Docker 一键部署**（推荐，服务器只需 Docker + 外部 Caddy）：
+  见 [deploy/docker/README.md](deploy/docker/README.md)，`docker compose up -d --build` 一条命令起全栈。
+- **systemd 二进制部署**：完整分步指南见 [deploy/DEPLOY.md](deploy/DEPLOY.md)，
+  或开发机 `bash deploy/push.sh root@服务器IP` 一条命令打包+上传+部署。
+
+## 反向代理与 SSL 证书（生产必读）
+
+### 先懂流量结构：三条反代规则
+
+```
+浏览器 ──https://域名或IP（443，TLS 在 Caddy 终止）──▶ Caddy 反代
+    /             → 127.0.0.1:3000   SvelteKit 页面
+    /api/*、/ws   → 127.0.0.1:8080   Go 后端（REST + 成员同步 WebSocket）
+    /livekit/*    → 127.0.0.1:7880   LiveKit 信令（⚠ 必须剥掉 /livekit 前缀）
+浏览器 ══ WebRTC 语音媒体直连 ══▶ 7881/TCP + 50000-50100/UDP（不经过反代）
+```
+
+为什么信令要走 `/livekit` 路径代理：HTTPS 页面禁止连 `ws://` 明文信令（混合内容），
+前端会自动把信令地址改写成 `wss://当前域名/livekit`。而 LiveKit 不认识 `/livekit`
+前缀，所以反代必须**剥前缀**转发（Caddy 用 `handle_path`；nginx 用结尾带斜杠的
+`proxy_pass http://127.0.0.1:7880/`），否则信令 404。剥前缀后浏览器全程只信任
+反代一个证书，LiveKit 本身**不需要任何 TLS 配置**；媒体流是 UDP/TCP 直连，也不经反代。
+
+### SSL 证书四种方案（按你的条件对号入座）
+
+**方案 A：有域名（推荐）——Caddy 自动签发 Let's Encrypt，零维护**
+
+前提：域名 A 记录指向服务器，80/443 公网可达。`apt install caddy` 后写
+`/etc/caddy/Caddyfile`：
+
+```caddyfile
+voice.example.com {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+	# 必须用 handle_path：剥掉 /livekit 前缀，用 handle 会信令 404
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
+```
+
+`systemctl reload caddy` 即完成——签发和续期全自动，证书文件都不用找。
+
+**方案 B：无域名、只有公网 IP——Let's Encrypt IP 证书（需 Caddy ≥ 2.10）**
+
+Let's Encrypt 自 2026 年起给公网 IP 签发证书（6 天短时效，Caddy 自动续期）。
+和方案 A 的差别只有两点：站点地址写 IP；`tls` 块里指定 `shortlived` 配置。
+另外**必须加全局 `default_sni`**——客户端访问 IP 时不发送 SNI（RFC 规定），
+缺了它 Caddy 选不出证书，TLS 握手直接失败，站点表现为完全连不上：
+
+```caddyfile
+{
+	default_sni 203.0.113.10      # 换成你的公网 IP
+}
+
+203.0.113.10 {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived     # IP 证书只走这个配置；注意是 issuer 单数
+		}
+	}
+	# 以下 handle 规则与方案 A 完全相同（照抄上面的四个 handle 块）
+}
+```
+
+完整可抄文件：[deploy/docker/Caddyfile.ip-direct.example](deploy/docker/Caddyfile.ip-direct.example)。
+签发是否成功看日志：`journalctl -u caddy | grep -i certificate` 出现
+`certificate obtained successfully` 即成功。本项目 156 段服务器长期实测稳定。
+
+**方案 C：已有证书文件（买的 / 云厂商免费送的）**
+
+```caddyfile
+voice.example.com {
+	tls /etc/ssl/fullchain.pem /etc/ssl/privkey.pem
+	# handle 规则同方案 A
+}
+```
+
+**方案 D：纯内网（没域名没公网）——Caddy 自签**
+
+站点地址写内网 IP，加一行 `tls internal`。浏览器首次访问点「高级 → 继续访问」
+即可，HTTPS 依然成立，麦克风照常可用。开发机的证书生成见上文本地部署一节。
+
+### 用 nginx？
+
+等价配置在 [deploy/nginx/voicerooms.conf](deploy/nginx/voicerooms.conf)，与 Caddy
+的差别要点：`/ws` 和 `/livekit/` 需要手动配 WebSocket 升级头
+（`proxy_http_version 1.1` + `Upgrade`/`Connection` + 加大 `proxy_read_timeout`）；
+`/livekit/` 的 `proxy_pass` 结尾**带斜杠**实现剥前缀；证书用 `ssl_certificate`
+指令引用（Let's Encrypt 用 certbot 签发，或云厂商免费证书上传）。
+
+### 防火墙放行清单（云安全组）
+
+| 端口 | 协议 | 用途 | 对公网开放 |
+|---|---|---|---|
+| 80 / 443 | TCP | 页面 + API + 信令代理（兼 ACME 签发验证） | 是 |
+| 7881 | TCP | WebRTC over TCP 回退 | 是 |
+| 50000-50100 | UDP | 语音媒体流（**最常漏，漏了就是"连上但听不见"**） | 是 |
+| 7880 / 8080 / 3000 | TCP | 信令/后端/页面源站 | **否**，只听 127.0.0.1 |
+
+### 部署完验证
+
+```bash
+curl https://你的域名或IP/api/health
+# 期望：{"go":"ok","livekit":"ok","activeRooms":0}
+```
+
+然后两台设备（一台正常窗口 + 一台无痕）进同一房间互听。听不见按顺序查：
+安全组 UDP 50000-50100 → 双方都点过「打开麦克风」和「点击开启声音」。
+
 ## 常见问题
 
 本地开发的问题见上文「本地常见问题速查」。服务器部署相关：
 
 - **令牌报 `token is not valid yet`**：LiveKit 服务器与签发方时钟相差过大。同步时钟（`timedatectl set-ntp true` 或 `hwclock --hctosys`）。
 - **能连上但互相听不见**：九成是云安全组没放行 **UDP 50000-50100**（TCP 7881 是回退通道）；双方都在严格 NAT 后时启用 TURN（见 `deploy/livekit.production.yaml` 注释）。
-- **IP 直连部署握手失败/证书不匹配**：Caddy 配置缺 `default_sni`，见 [deploy/docker/Caddyfile.ip-direct.example](deploy/docker/Caddyfile.ip-direct.example) 的注释。
-
-## 部署到服务器
-
-两种方式二选一：
-
-- **Docker 一键部署**（推荐，服务器只需 Docker + 外部 Caddy）：
-  见 [deploy/docker/README.md](deploy/docker/README.md)，`docker compose up -d --build` 一条命令起全栈；
-  有域名走 Let's Encrypt 域名证书，**无域名纯公网 IP 也可直连**（Let's Encrypt IP 证书，见 deploy/docker/Caddyfile.ip-direct.example）。
-- **systemd 二进制部署**：完整生产部署指南（含 SSL 证书三种方案）见
-  [deploy/DEPLOY.md](deploy/DEPLOY.md)，配套的反代配置、LiveKit 生产配置、
-  systemd 单元都在 `deploy/` 目录。
+- **IP 直连部署握手失败/证书不匹配**：Caddy 配置缺 `default_sni`，见上文方案 B 与 [deploy/docker/Caddyfile.ip-direct.example](deploy/docker/Caddyfile.ip-direct.example) 的注释。
+- **反代后信令 404**：`/livekit` 路径没剥前缀——Caddy 要用 `handle_path`，nginx 的 `proxy_pass` 结尾要带斜杠。
