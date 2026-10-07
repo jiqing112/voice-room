@@ -57,41 +57,126 @@ docker compose -f compose.all-in-one.yaml up -d --build
   升级/扩缩容的能力（升级任何一部分都是整容器重建，语音会瞬断几秒）。
   个人/朋友自用无所谓；要认真运营建议三容器。
 
-## 反代配置（二选一）
+## 反向代理与 SSL 证书
 
-**方式一：有域名**——域名 A 记录指向服务器，80/443 放行，然后：
+### 反代什么端口
 
-```bash
-cp Caddyfile.example /etc/caddy/Caddyfile   # 改成你的域名
-systemctl reload caddy                      # 证书自动签发 + 永久自动续期
+反代（宿主机 Caddy/nginx）只监听 443（80 做 HTTPS 跳转），把不同**路径**转发到
+本机三个端口——这正是 compose 里 7880/8080/3000 只绑 `127.0.0.1` 的原因：
+
+| 浏览器发出的请求 | 反代转发到 | 端口上跑的是什么 | 说明 |
+|---|---|---|---|
+| `https://域名/` | `127.0.0.1:3000` | SvelteKit 页面（web 容器） | 所有未匹配路径都归它 |
+| `https://域名/api/rooms` | `127.0.0.1:8080` | Go 后端 REST API（server 容器） | 前缀原样透传 |
+| `wss://域名/ws` | `127.0.0.1:8080` | Go 后端成员同步 WebSocket | 与 API 同端口，靠路径区分 |
+| `wss://域名/livekit/rtc` | `127.0.0.1:7880`/`rtc` | LiveKit 信令（livekit 容器） | **必须剥掉 `/livekit` 前缀**，否则 404 |
+| 语音媒体（不是网页请求） | 浏览器**直连** `7881/TCP + 50000-50100/UDP` | LiveKit 媒体 | **不经反代**，compose 已把这些端口对公网发布 |
+
+要点：反代只接触 **3000 / 8080 / 7880** 三个回环端口；**7881 和 UDP 段是媒体
+直连端口，反代管不着**——安全组必须单独放行它们，这是"连上但听不见"的头号原因。
+
+### 方案 A：有域名（推荐，证书全自动）
+
+域名 A 记录指向服务器、80/443 放行，`/etc/caddy/Caddyfile` 全文如下
+（改域名即可，证书签发/续期全自动）：
+
+```caddyfile
+voice.example.com {
+	encode gzip
+
+	# REST API → Go 后端容器（8080）
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	# 成员同步 WebSocket → 同一 Go 后端（长连接）
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+	# LiveKit 信令 → livekit 容器（7880）
+	# 必须用 handle_path：剥掉 /livekit 前缀再转发，用 handle 会信令 404
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+	# 其余全部 → SvelteKit 页面容器（3000）
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
 ```
 
-**方式二：无域名、纯 IP 直连**——用的是 Let's Encrypt 2026 年起开放的
-IP 证书能力（6 天短时效证书，Caddy 全自动续期）：
+`systemctl reload caddy` 完成。同目录 [`Caddyfile.example`](Caddyfile.example)
+是同一份文件（含可选站点密码墙注释）。
+
+### 方案 B：无域名、纯公网 IP（Let's Encrypt IP 证书）
+
+Let's Encrypt 自 2026 年起给公网 IP 签发证书（6 天短时效，Caddy 全自动续期）。
+**前置：Caddy ≥ 2.10**（老版本不认识 `profile` 指令；2.11.2 实测通过），不够就升级：
 
 ```bash
-# 1. 确认 Caddy >= 2.10（老版本不认识 profile 指令；本项目 2.11.2 实测通过）
 caddy version
-#    不够就升级（注意 systemd 单元里 ExecStart 的二进制路径，apt 装的在 /usr/bin）：
-#    curl -fsSL https://github.com/caddyserver/caddy/releases/download/v2.11.2/caddy_2.11.2_linux_amd64.tar.gz \
-#      | tar -xz -C /usr/local/bin caddy
-
-# 2. 写入配置（把里面的 IP 换成你的公网 IP）
-cp Caddyfile.ip-direct.example /etc/caddy/Caddyfile
-vim /etc/caddy/Caddyfile
-systemctl reload caddy
-
-# 3. 确认签发成功（日志出现 certificate obtained successfully）
-journalctl -u caddy --since "2 min ago" | grep -i certificate
+# 不够就升级（注意 systemd 单元里 ExecStart 的二进制路径，apt 装的在 /usr/bin）：
+curl -fsSL https://github.com/caddyserver/caddy/releases/download/v2.11.2/caddy_2.11.2_linux_amd64.tar.gz \
+	| tar -xz -C /usr/local/bin caddy
 ```
 
-IP 方案的两个关键点（样例文件里有注释，这里说明原因）：
+`/etc/caddy/Caddyfile` 全文（把 IP 换成你的）：
 
-- **`default_sni` 全局项必须写**：客户端访问 IP 时不发送 SNI（RFC 规定），
-  Caddy 没有 SNI 就选不出证书，TLS 握手直接报 internal error，
-  站点表现为"完全连不上"。这是纯 IP 部署最常见的坑。
-- **证书 6 天一换**：续期完全自动，但要求 80/443 的公网入站长期可达；
-  服务器长时间离线会过期，开机联网后 Caddy 会立即续上。
+```caddyfile
+{
+	# 关键：客户端访问 IP 时不发送 SNI（RFC 规定），缺了它 Caddy 选不出证书，
+	# TLS 握手直接失败，站点表现为"完全连不上"——纯 IP 部署最常见的坑
+	default_sni 203.0.113.10
+}
+
+203.0.113.10 {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived   # IP 证书只走这个配置（6 天有效期）；注意是 issuer 单数
+		}
+	}
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /ws {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}
+```
+
+`systemctl reload caddy` 后确认签发成功：
+
+```bash
+journalctl -u caddy --since "2 min ago" | grep -i certificate
+# 出现 "certificate obtained successfully" 即成功
+```
+
+注意：证书 6 天一换、续期全自动，但要求 80/443 公网入站长期可达——服务器长时间
+离线会过期，联网后 Caddy 会立即续上。同目录
+[`Caddyfile.ip-direct.example`](Caddyfile.ip-direct.example) 是同一份文件。
+
+### 方案 C / D（简述）
+
+- **已有证书文件**：把方案 A 的站点块加一行 `tls /路径/fullchain.pem /路径/privkey.pem`。
+- **纯内网自签**：站点地址写内网 IP + `tls internal`，浏览器点一次「继续访问」。
+
+### 用 nginx？
+
+等价配置在 [`../nginx/voicerooms.conf`](../nginx/voicerooms.conf)。与 Caddy 的差异
+要点：`/ws` 与 `/livekit/` 要手动配 WebSocket 升级头（`proxy_http_version 1.1` +
+`Upgrade`/`Connection` + 加大 `proxy_read_timeout`）；`/livekit/` 的 `proxy_pass`
+**结尾带斜杠**实现剥前缀；证书用 `ssl_certificate` 指令。
+
+> 无论哪种方案，反代原理、流量结构与排障说明也见
+> [deploy/DEPLOY.md](../DEPLOY.md) 与主 README「反向代理与 SSL 证书」章节。
 
 ## 部署步骤
 
@@ -101,7 +186,9 @@ IP 方案的两个关键点（样例文件里有注释，这里说明原因）�
 - 云安全组/防火墙放行：TCP 22 / 80 / 443 / 7881 + **UDP 50000-50100**
   （8080/3000/7880 只在本机回环，不用放行；IP 证书方案 80/443 还兼做签发验证）
 
-**1. 反代**：按上面"反代配置"二选一配置好 Caddy
+**1. 反代**：按上面「反向代理与 SSL 证书」二选一——域名版抄方案 A 的 Caddyfile
+（或 `cp Caddyfile.example /etc/caddy/Caddyfile` 后改域名），IP 版抄方案 B
+（或 `cp Caddyfile.ip-direct.example` 后改 IP），然后 `systemctl reload caddy`
 
 **2. 写配置并启动**
 
